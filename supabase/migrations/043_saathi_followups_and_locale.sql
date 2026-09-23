@@ -12,15 +12,6 @@ ALTER TABLE profiles
 
 DO $$
 BEGIN
-  IF TG_OP = 'UPDATE' THEN
-    IF NEW.account_id IS DISTINCT FROM OLD.account_id
-      OR NEW.created_by_user_id IS DISTINCT FROM OLD.created_by_user_id
-    THEN
-      RAISE EXCEPTION 'follow-up account and creator are immutable';
-    END IF;
-    NEW.created_at := OLD.created_at;
-  END IF;
-
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'profiles_language_preference_check'
   ) THEN
@@ -61,6 +52,15 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    IF NEW.account_id IS DISTINCT FROM OLD.account_id
+      OR NEW.created_by_user_id IS DISTINCT FROM OLD.created_by_user_id
+    THEN
+      RAISE EXCEPTION 'follow-up account and creator are immutable';
+    END IF;
+    NEW.created_at := OLD.created_at;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM contacts c
     WHERE c.id = NEW.contact_id AND c.account_id = NEW.account_id
