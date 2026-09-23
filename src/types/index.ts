@@ -45,7 +45,30 @@ export interface Profile {
    * `@/lib/auth/roles` rather than comparing this string directly.
    */
   account_role?: AccountRole;
+  language_preference?: "en" | "hi";
+  business_timezone?: string;
   created_at: string;
+}
+
+export type FollowUpStatus = "open" | "completed";
+
+export interface FollowUp {
+  id: string;
+  account_id: string;
+  contact_id: string;
+  conversation_id?: string | null;
+  purpose: string;
+  note?: string | null;
+  due_at: string;
+  assigned_to_user_id: string;
+  created_by_user_id: string;
+  status: FollowUpStatus;
+  completed_at?: string | null;
+  completed_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  contact?: Pick<Contact, "id" | "name" | "phone">;
+  assignee?: Pick<Profile, "full_name">;
 }
 
 // ============================================================

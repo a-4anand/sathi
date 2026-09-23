@@ -35,6 +35,8 @@ interface Profile {
   beta_features: string[];
   account_id: string | null;
   account_role: AccountRole | null;
+  language_preference: "en" | "hi";
+  business_timezone: string;
 }
 
 interface AccountSummary {
@@ -152,6 +154,8 @@ interface ProfileRow {
   beta_features: string[] | null;
   account_id: string | null;
   account_role: string | null;
+  language_preference: string | null;
+  business_timezone: string | null;
 }
 
 /**
@@ -192,7 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const result = await supabase
           .from("profiles")
           .select(
-            "id, full_name, email, avatar_url, role, beta_features, account_id, account_role",
+            "id, full_name, email, avatar_url, role, beta_features, account_id, account_role, language_preference, business_timezone",
           )
           .eq("user_id", userId)
           .maybeSingle();
@@ -280,6 +284,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           beta_features: data.beta_features ?? [],
           account_id: data.account_id ?? null,
           account_role: accountRole,
+          language_preference:
+            data.language_preference === "hi" ? "hi" : "en",
+          business_timezone: data.business_timezone ?? "Asia/Kolkata",
         });
         setAccount(accountRow);
         if (!data.account_id || !accountRole) {

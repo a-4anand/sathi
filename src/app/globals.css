@@ -117,37 +117,51 @@ html[data-mode="dark"] {
 }
 
 html[data-mode="light"] {
-  --background: oklch(0.99 0.002 260);
-  --foreground: oklch(0.21 0.01 260);
-  --card: oklch(1 0 0);
-  --card-2: oklch(0.985 0.002 260);
-  --card-foreground: oklch(0.21 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.01 260);
-  --secondary: oklch(0.967 0.003 260);
-  --secondary-foreground: oklch(0.25 0.01 260);
-  --muted: oklch(0.967 0.003 260);
-  --muted-foreground: oklch(0.52 0.015 260);
-  --accent: oklch(0.96 0.004 260);
-  --accent-foreground: oklch(0.25 0.01 260);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.004 260);
-  --input: oklch(0.922 0.004 260);
+  --background: #f6f7f5;
+  --foreground: #17231e;
+  --card: #ffffff;
+  --card-2: #eef2ef;
+  --card-foreground: #17231e;
+  --popover: #ffffff;
+  --popover-foreground: #17231e;
+  --secondary: #eef2ef;
+  --secondary-foreground: #17231e;
+  --muted: #eef2ef;
+  --muted-foreground: #52635b;
+  --accent: #e5f3ec;
+  --accent-foreground: #17231e;
+  --destructive: #b42318;
+  --border: #d6dfd9;
+  --input: #d6dfd9;
   --chart-2: oklch(0.6 0.1 260);
   --chart-3: oklch(0.7 0.06 260);
   --chart-4: oklch(0.8 0.04 260);
   --chart-5: oklch(0.87 0.03 260);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0.002 260);
-  --sidebar-foreground: oklch(0.21 0.01 260);
-  --sidebar-accent: oklch(0.96 0.004 260);
-  --sidebar-accent-foreground: oklch(0.25 0.01 260);
-  --sidebar-border: oklch(0.922 0.004 260);
+  --sidebar: #102a23;
+  --sidebar-foreground: #ffffff;
+  --sidebar-accent: rgba(255, 255, 255, 0.09);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
 }
 
 /* ---- ACCENT: primary color ---- */
 
 :root,
+html[data-theme="saathi"] {
+  --primary: #126b56;
+  --primary-foreground: #ffffff;
+  --primary-hover: #0e5948;
+  --primary-soft: #e5f3ec;
+  --primary-soft-2: #cde8dc;
+  --ring: #126b56;
+  --chart-1: #126b56;
+  --chart-2: #255dc1;
+  --sidebar-primary: #6fd1b3;
+  --sidebar-primary-foreground: #102a23;
+  --sidebar-ring: #6fd1b3;
+}
+
 html[data-theme="violet"] {
   --primary: oklch(0.526 0.247 293);
   --primary-foreground: oklch(0.985 0 0);
@@ -223,8 +237,15 @@ html[data-theme="rose"] {
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  .font-indic {
+    font-family: var(--font-noto-devanagari), var(--font-sans), sans-serif;
   }
 }

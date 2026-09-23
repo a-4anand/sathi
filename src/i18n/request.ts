@@ -1,19 +1,54 @@
 import { getRequestConfig } from 'next-intl/server';
+import { cookies } from 'next/headers';
+import { LOCALE_COOKIE, SUPPORTED_LOCALES } from './config';
+
+function mergeMessages(
+  base: Record<string, unknown>,
+  overrides: Record<string, unknown>
+): Record<string, unknown> {
+  const result = { ...base };
+  for (const [key, value] of Object.entries(overrides)) {
+    const current = result[key];
+    result[key] =
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      current &&
+      typeof current === 'object' &&
+      !Array.isArray(current)
+        ? mergeMessages(
+            current as Record<string, unknown>,
+            value as Record<string, unknown>
+          )
+        : value;
+  }
+  return result;
+}
 
 export default getRequestConfig(async () => {
-  // Read the locale from the environment, defaulting to 'en'
-  const locale = process.env.NEXT_PUBLIC_APP_LOCALE || 'en';
+  const cookieLocale = (await cookies()).get(LOCALE_COOKIE)?.value;
+  const configuredLocale = process.env.NEXT_PUBLIC_APP_LOCALE || 'en';
+  const locale = (SUPPORTED_LOCALES as readonly string[]).includes(
+    cookieLocale ?? ''
+  )
+    ? cookieLocale!
+    : (SUPPORTED_LOCALES as readonly string[]).includes(configuredLocale)
+      ? configuredLocale
+      : 'en';
 
-  let messages;
+  const english = (await import(`../../messages/en.json`)).default;
+  let messages: typeof english = english;
   try {
-    messages = (await import(`../../messages/${locale}.json`)).default;
-  } catch (error) {
-    // Fallback to English if the dictionary for the requested locale doesn't exist yet
-    messages = (await import(`../../messages/en.json`)).default;
+    if (locale !== 'en') {
+      const localized = (await import(`../../messages/${locale}.json`)).default;
+      messages = mergeMessages(english, localized) as typeof english;
+    }
+  } catch {
+    // English remains the complete fallback catalogue.
   }
 
   return {
     locale,
-    messages
+    messages,
   };
 });

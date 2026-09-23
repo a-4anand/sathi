@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { useTranslations } from "next-intl";
+import { FollowUpDialog } from "@/components/follow-ups/follow-up-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -1081,6 +1082,10 @@ export function MessageThread({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+      </div>
+
+      <div className="border-b border-border bg-card p-2 lg:hidden">
+        <FollowUpDialog contact={contact} conversationId={conversation.id} />
       </div>
 
       {/* Messages Area */}
