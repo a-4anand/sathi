@@ -1,30 +1,228 @@
 'use client';
 
 import Link from 'next/link';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
   Check,
+  CircleAlert,
   CircleHelp,
+  KeyRound,
+  LoaderCircle,
   LockKeyhole,
   MessageCircleMore,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+type MetaSignupAssets = { wabaId: string; phoneNumberId: string };
+
+type FacebookSdk = {
+  init: (options: {
+    appId: string;
+    cookie: boolean;
+    xfbml: boolean;
+    version: string;
+  }) => void;
+  login: (
+    callback: (response: { authResponse?: { code?: string } }) => void,
+    options: {
+      config_id: string;
+      response_type: 'code';
+      override_default_response_type: true;
+    }
+  ) => void;
+};
+
+declare global {
+  interface Window {
+    FB?: FacebookSdk;
+  }
+}
+
+const META_EVENT_ORIGINS = new Set([
+  'https://www.facebook.com',
+  'https://web.facebook.com',
+  'https://business.facebook.com',
+]);
+
+function parseSignupAssets(value: unknown): MetaSignupAssets | null {
+  if (!value || typeof value !== 'object') return null;
+  const event = value as {
+    type?: unknown;
+    event?: unknown;
+    data?: { waba_id?: unknown; phone_number_id?: unknown };
+  };
+  if (event.type !== 'WA_EMBEDDED_SIGNUP' || event.event !== 'FINISH')
+    return null;
+  const wabaId = event.data?.waba_id;
+  const phoneNumberId = event.data?.phone_number_id;
+  if (
+    typeof wabaId !== 'string' ||
+    typeof phoneNumberId !== 'string' ||
+    !/^\d+$/.test(wabaId) ||
+    !/^\d+$/.test(phoneNumberId)
+  ) {
+    return null;
+  }
+  return { wabaId, phoneNumberId };
+}
 
 /**
- * Deliberately non-technical entry point for WhatsApp setup. The existing
- * Settings screen remains the secure operator fallback; this page gives a
- * small-business owner context before they ever see an ID or token field.
- *
- * Meta Embedded Signup will replace the final `settings` hand-off once the
- * Saathi Meta app has its production Embedded Signup configuration approved.
+ * Meta Embedded Signup returns a short-lived browser code and asset IDs.
+ * The API route exchanges that code server-side, so a secret or permanent
+ * access token never reaches a customer's browser.
  */
 export default function ConnectWhatsAppPage() {
   const t = useTranslations('ConnectWhatsApp');
+  const router = useRouter();
+  const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+  const configurationId =
+    process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID;
+  const enabled = Boolean(appId && configurationId);
+  const [sdkReady, setSdkReady] = useState(false);
+  const [stage, setStage] = useState<
+    'idle' | 'connecting' | 'pin' | 'finishing'
+  >('idle');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const codeRef = useRef<string | null>(null);
+  const assetsRef = useRef<MetaSignupAssets | null>(null);
+  const completingRef = useRef(false);
+
+  const completeConnection = useCallback(async () => {
+    if (!codeRef.current || !assetsRef.current || completingRef.current) return;
+    completingRef.current = true;
+    setStage('connecting');
+    setError(null);
+    try {
+      const response = await fetch('/api/whatsapp/embedded-signup/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: codeRef.current,
+          waba_id: assetsRef.current.wabaId,
+          phone_number_id: assetsRef.current.phoneNumberId,
+        }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        success?: boolean;
+      };
+      if (!response.ok || !result.success)
+        throw new Error(result.error || t('connectionError'));
+      setStage('pin');
+    } catch (cause) {
+      completingRef.current = false;
+      setStage('idle');
+      setError(cause instanceof Error ? cause.message : t('connectionError'));
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!enabled || !appId) return;
+    const initialise = () => {
+      if (!window.FB) return;
+      window.FB.init({ appId, cookie: true, xfbml: false, version: 'v21.0' });
+      setSdkReady(true);
+    };
+    const existing = document.getElementById(
+      'meta-facebook-sdk'
+    ) as HTMLScriptElement | null;
+    if (window.FB) {
+      initialise();
+    } else if (existing) {
+      existing.addEventListener('load', initialise, { once: true });
+    } else {
+      const script = document.createElement('script');
+      script.id = 'meta-facebook-sdk';
+      script.async = true;
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.addEventListener('load', initialise, { once: true });
+      document.head.appendChild(script);
+    }
+  }, [appId, enabled]);
+
+  useEffect(() => {
+    const receiveMetaEvent = (message: MessageEvent<unknown>) => {
+      if (!META_EVENT_ORIGINS.has(message.origin)) return;
+      let payload: unknown = message.data;
+      if (typeof payload === 'string') {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          return;
+        }
+      }
+      const assets = parseSignupAssets(payload);
+      if (!assets) return;
+      assetsRef.current = assets;
+      void completeConnection();
+    };
+    window.addEventListener('message', receiveMetaEvent);
+    return () => window.removeEventListener('message', receiveMetaEvent);
+  }, [completeConnection]);
+
+  const beginSignup = () => {
+    if (!configurationId || !window.FB || !sdkReady) return;
+    setError(null);
+    codeRef.current = null;
+    assetsRef.current = null;
+    completingRef.current = false;
+    setStage('connecting');
+    window.FB.login(
+      (response) => {
+        const code = response.authResponse?.code;
+        if (!code) {
+          setStage('idle');
+          setError(t('cancelled'));
+          return;
+        }
+        codeRef.current = code;
+        void completeConnection();
+      },
+      {
+        config_id: configurationId,
+        response_type: 'code',
+        override_default_response_type: true,
+      }
+    );
+  };
+
+  const finishRegistration = async () => {
+    if (!/^\d{6}$/.test(pin)) {
+      setError(t('pinError'));
+      return;
+    }
+    setStage('finishing');
+    setError(null);
+    try {
+      const response = await fetch('/api/whatsapp/embedded-signup/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        success?: boolean;
+      };
+      if (!response.ok || !result.success)
+        throw new Error(result.error || t('pinError'));
+      router.replace('/dashboard?connected=whatsapp');
+      router.refresh();
+    } catch (cause) {
+      setStage('pin');
+      setError(cause instanceof Error ? cause.message : t('pinError'));
+    }
+  };
+
+  const working = stage === 'connecting' || stage === 'finishing';
 
   return (
     <div className="mx-auto w-full max-w-4xl pb-10">
@@ -52,12 +250,69 @@ export default function ConnectWhatsAppPage() {
           <p className="mt-4 max-w-xl text-sm leading-7 text-white/75 sm:text-base">
             {t('description')}
           </p>
-          <Button
-            render={<Link href="/settings?tab=whatsapp&source=guided" />}
-            className="mt-7 h-12 rounded-2xl bg-[#e9fbf4] px-5 font-semibold text-[#123d32] hover:bg-white"
-          >
-            {t('startConnection')} <ArrowRight className="size-4" />
-          </Button>
+
+          {stage === 'pin' ? (
+            <div className="mt-7 max-w-md rounded-2xl bg-white/10 p-4">
+              <div className="flex items-center gap-2 font-semibold">
+                <KeyRound className="size-4 text-[#c8f2e4]" />
+                {t('pinTitle')}
+              </div>
+              <p className="mt-1 text-sm leading-6 text-white/75">
+                {t('pinBody')}
+              </p>
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                <Input
+                  value={pin}
+                  onChange={(event) =>
+                    setPin(event.target.value.replace(/\D/g, '').slice(0, 6))
+                  }
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="••••••"
+                  aria-label={t('pinLabel')}
+                  className="h-11 border-white/20 bg-white text-center tracking-[0.35em] text-[#123d32] placeholder:tracking-normal"
+                />
+                <Button
+                  onClick={finishRegistration}
+                  className="h-11 rounded-xl bg-[#e9fbf4] px-5 font-semibold text-[#123d32] hover:bg-white"
+                >
+                  {t('finishConnection')}
+                </Button>
+              </div>
+            </div>
+          ) : enabled ? (
+            <Button
+              onClick={beginSignup}
+              disabled={!sdkReady || working}
+              className="mt-7 h-12 rounded-2xl bg-[#e9fbf4] px-5 font-semibold text-[#123d32] hover:bg-white"
+            >
+              {working ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="size-4" />
+              )}
+              {working ? t('connecting') : t('startConnection')}
+            </Button>
+          ) : (
+            <div className="mt-7">
+              <p className="text-sm text-[#c8f2e4]">{t('notReadyBody')}</p>
+              <Button
+                render={<Link href="/settings?tab=whatsapp&source=guided" />}
+                className="mt-3 h-11 rounded-xl bg-[#e9fbf4] px-5 font-semibold text-[#123d32] hover:bg-white"
+              >
+                {t('useSecureSetup')} <ArrowRight className="size-4" />
+              </Button>
+            </div>
+          )}
+          {error && (
+            <p
+              className="mt-4 flex items-start gap-2 text-sm leading-6 text-[#ffd0cc]"
+              role="alert"
+            >
+              <CircleAlert className="mt-0.5 size-4 shrink-0" />
+              {error}
+            </p>
+          )}
         </div>
       </section>
 

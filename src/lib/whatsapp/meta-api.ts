@@ -18,6 +18,53 @@ export interface MetaSendResult {
   messageId: string
 }
 
+export interface EmbeddedSignupTokenArgs {
+  /** The short-lived code Facebook Login for Business returns after signup. */
+  code: string
+}
+
+/**
+ * Exchange the short-lived Embedded Signup code for the business token that
+ * is scoped to the newly connected customer's WhatsApp assets.
+ *
+ * This is intentionally server-only: META_APP_SECRET must never reach the
+ * browser. The caller is responsible for encrypting the returned token before
+ * persisting it.
+ */
+export async function exchangeEmbeddedSignupCode(
+  args: EmbeddedSignupTokenArgs,
+): Promise<{ accessToken: string }> {
+  const appId = process.env.META_APP_ID?.trim()
+  const appSecret = process.env.META_APP_SECRET?.trim()
+  if (!appId || !appSecret) {
+    throw new Error(
+      'Meta Embedded Signup is not configured on this deployment.',
+    )
+  }
+
+  const body = new URLSearchParams({
+    client_id: appId,
+    client_secret: appSecret,
+    code: args.code,
+  })
+  const response = await fetch(`${META_API_BASE}/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  if (!response.ok) {
+    await throwMetaError(
+      response,
+      `Meta OAuth exchange failed: ${response.status}`,
+    )
+  }
+  const data = (await response.json()) as { access_token?: unknown }
+  if (typeof data.access_token !== 'string' || data.access_token.length === 0) {
+    throw new Error('Meta did not return an access token for this business.')
+  }
+  return { accessToken: data.access_token }
+}
+
 export interface MetaPhoneInfo {
   id: string
   display_phone_number: string
@@ -82,7 +129,10 @@ export class MetaApiError extends Error {
  * Read a failed Graph response into a MetaApiError without throwing.
  * Consumes the body — call at most once per response.
  */
-async function readMetaError(response: Response, fallback: string): Promise<MetaApiError> {
+async function readMetaError(
+  response: Response,
+  fallback: string,
+): Promise<MetaApiError> {
   let message = fallback
   let envelope: MetaErrorResponse['error'] | undefined
   try {
@@ -94,7 +144,10 @@ async function readMetaError(response: Response, fallback: string): Promise<Meta
   }
   return new MetaApiError(message, {
     code: typeof envelope?.code === 'number' ? envelope.code : null,
-    subcode: typeof envelope?.error_subcode === 'number' ? envelope.error_subcode : null,
+    subcode:
+      typeof envelope?.error_subcode === 'number'
+        ? envelope.error_subcode
+        : null,
     type: envelope?.type ?? null,
     fbtraceId: envelope?.fbtrace_id ?? null,
     httpStatus: response.status,
@@ -102,7 +155,10 @@ async function readMetaError(response: Response, fallback: string): Promise<Meta
   })
 }
 
-async function throwMetaError(response: Response, fallback: string): Promise<never> {
+async function throwMetaError(
+  response: Response,
+  fallback: string,
+): Promise<never> {
   throw await readMetaError(response, fallback)
 }
 
@@ -120,7 +176,7 @@ export interface VerifyPhoneNumberArgs {
  * (display_phone_number, verified_name, quality_rating).
  */
 export async function verifyPhoneNumber(
-  args: VerifyPhoneNumberArgs
+  args: VerifyPhoneNumberArgs,
 ): Promise<MetaPhoneInfo> {
   const { phoneNumberId, accessToken } = args
   const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`
@@ -189,7 +245,7 @@ export interface RegisterPhoneNumberResult {
  *   * Number on other app  → "Number is registered to another app..."
  */
 export async function registerPhoneNumber(
-  args: RegisterPhoneNumberArgs
+  args: RegisterPhoneNumberArgs,
 ): Promise<RegisterPhoneNumberResult> {
   const { phoneNumberId, accessToken, pin } = args
   const url = `${META_API_BASE}/${phoneNumberId}/register`
@@ -210,7 +266,10 @@ export async function registerPhoneNumber(
   // text "already registered" appears when the number is already
   // subscribed to this app — that's success from the caller's
   // perspective, surface it as such.
-  const error = await readMetaError(response, `Meta API error: ${response.status}`)
+  const error = await readMetaError(
+    response,
+    `Meta API error: ${response.status}`,
+  )
   if (/already.*registered/i.test(error.message)) {
     return { success: true, alreadyRegistered: true }
   }
@@ -227,7 +286,7 @@ export interface SubscribeWabaToAppArgs {
  * returns success even when the subscription already exists.
  */
 export async function subscribeWabaToApp(
-  args: SubscribeWabaToAppArgs
+  args: SubscribeWabaToAppArgs,
 ): Promise<void> {
   const { wabaId, accessToken } = args
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`
@@ -262,7 +321,7 @@ export interface WabaPhoneNumber {
  * WABA holds more numbers than one page returns.
  */
 export async function listWabaPhoneNumbers(
-  args: ListWabaPhoneNumbersArgs
+  args: ListWabaPhoneNumbersArgs,
 ): Promise<WabaPhoneNumber[]> {
   const { wabaId, accessToken } = args
   const out: WabaPhoneNumber[] = []
@@ -304,7 +363,7 @@ export interface SubscribedApp {
  * the user clicks Verify Registration.
  */
 export async function getSubscribedApps(
-  args: GetSubscribedAppsArgs
+  args: GetSubscribedAppsArgs,
 ): Promise<SubscribedApp[]> {
   const { wabaId, accessToken } = args
   const url = `${META_API_BASE}/${wabaId}/subscribed_apps`
@@ -355,7 +414,7 @@ export interface SendTextMessageArgs {
  * Only works inside the 24-hour customer service window.
  */
 export async function sendTextMessage(
-  args: SendTextMessageArgs
+  args: SendTextMessageArgs,
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, text, contextMessageId } = args
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
@@ -414,7 +473,16 @@ export interface SendMediaMessageArgs {
 export async function sendMediaMessage(
   args: SendMediaMessageArgs,
 ): Promise<MetaSendResult> {
-  const { phoneNumberId, accessToken, to, kind, link, caption, filename, contextMessageId } = args
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    kind,
+    link,
+    caption,
+    filename,
+    contextMessageId,
+  } = args
   if (!link) throw new Error('sendMediaMessage requires a link.')
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
 
@@ -497,7 +565,7 @@ export interface SendTemplateMessageArgs {
  *     headers + URL buttons land correctly.
  */
 export async function sendTemplateMessage(
-  args: SendTemplateMessageArgs
+  args: SendTemplateMessageArgs,
 ): Promise<MetaSendResult> {
   const {
     phoneNumberId,
@@ -610,10 +678,15 @@ export async function uploadResumableMedia(
   })
   const startRes = await fetch(
     `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+    },
   )
   if (!startRes.ok) {
-    await throwMetaError(startRes, `Resumable upload start failed: ${startRes.status}`)
+    await throwMetaError(
+      startRes,
+      `Resumable upload start failed: ${startRes.status}`,
+    )
   }
   const startData = (await startRes.json()) as { id?: string }
   if (!startData.id) {
@@ -633,7 +706,10 @@ export async function uploadResumableMedia(
     body: bytes as unknown as BodyInit,
   })
   if (!uploadRes.ok) {
-    await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`)
+    await throwMetaError(
+      uploadRes,
+      `Resumable upload failed: ${uploadRes.status}`,
+    )
   }
   const uploadData = (await uploadRes.json()) as { h?: string }
   if (!uploadData.h) {
@@ -674,7 +750,7 @@ export interface SubmitMessageTemplateResult {
  * distinguishes 429 and shows a more actionable toast.
  */
 export async function submitMessageTemplate(
-  args: SubmitMessageTemplateArgs
+  args: SubmitMessageTemplateArgs,
 ): Promise<SubmitMessageTemplateResult> {
   const { wabaId, accessToken, payload } = args
   const url = `${META_API_BASE}/${wabaId}/message_templates`
@@ -725,7 +801,7 @@ export interface EditMessageTemplateResult {
  * — the route handler enforces that before calling here.
  */
 export async function editMessageTemplate(
-  args: EditMessageTemplateArgs
+  args: EditMessageTemplateArgs,
 ): Promise<EditMessageTemplateResult> {
   const { metaTemplateId, accessToken, components, category } = args
   const body: Record<string, unknown> = { components }
@@ -763,7 +839,7 @@ export interface DeleteMessageTemplateArgs {
  * sharing the same `name`.
  */
 export async function deleteMessageTemplate(
-  args: DeleteMessageTemplateArgs
+  args: DeleteMessageTemplateArgs,
 ): Promise<void> {
   const { wabaId, accessToken, name, metaTemplateId } = args
   const params = new URLSearchParams({ name })
@@ -800,7 +876,7 @@ export interface SendReactionMessageArgs {
  * Empty `emoji` removes the reaction per Meta's spec.
  */
 export async function sendReactionMessage(
-  args: SendReactionMessageArgs
+  args: SendReactionMessageArgs,
 ): Promise<MetaSendResult> {
   const { phoneNumberId, accessToken, to, targetMessageId, emoji } = args
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
@@ -851,7 +927,7 @@ export interface SendTypingIndicatorArgs {
  * must never block the reply that follows.
  */
 export async function sendTypingIndicator(
-  args: SendTypingIndicatorArgs
+  args: SendTypingIndicatorArgs,
 ): Promise<void> {
   const { phoneNumberId, accessToken, messageId } = args
   const url = `${META_API_BASE}/${phoneNumberId}/messages`
@@ -934,17 +1010,23 @@ export interface SendInteractiveButtonsArgs {
  * fail at save time, not during a live conversation.
  */
 export async function sendInteractiveButtons(
-  args: SendInteractiveButtonsArgs
+  args: SendInteractiveButtonsArgs,
 ): Promise<MetaSendResult> {
   const {
-    phoneNumberId, accessToken, to,
-    bodyText, headerText, footerText, buttons, contextMessageId,
+    phoneNumberId,
+    accessToken,
+    to,
+    bodyText,
+    headerText,
+    footerText,
+    buttons,
+    contextMessageId,
   } = args
   validateInteractiveBody(bodyText)
   validateInteractiveHeaderFooter(headerText, footerText)
   if (buttons.length < 1 || buttons.length > INTERACTIVE_LIMITS.maxButtons) {
     throw new Error(
-      `Interactive button message requires 1-${INTERACTIVE_LIMITS.maxButtons} buttons (got ${buttons.length}).`
+      `Interactive button message requires 1-${INTERACTIVE_LIMITS.maxButtons} buttons (got ${buttons.length}).`,
     )
   }
   const seenButtonIds = new Set<string>()
@@ -954,13 +1036,16 @@ export async function sendInteractiveButtons(
     // Meta rejects them, and the pre-flight validator (interactive.ts)
     // rejects them too, so guard here to keep the two paths in step.
     if (seenButtonIds.has(btn.id)) {
-      throw new Error(`Interactive message has duplicate button id "${btn.id}".`)
+      throw new Error(
+        `Interactive message has duplicate button id "${btn.id}".`,
+      )
     }
     seenButtonIds.add(btn.id)
-    if (!btn.title) throw new Error(`Interactive button "${btn.id}" missing title.`)
+    if (!btn.title)
+      throw new Error(`Interactive button "${btn.id}" missing title.`)
     if (btn.title.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
       throw new Error(
-        `Interactive button title "${btn.title}" exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`
+        `Interactive button title "${btn.title}" exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`,
       )
     }
   }
@@ -1041,29 +1126,39 @@ export interface SendInteractiveListArgs {
  * the matching row.id.
  */
 export async function sendInteractiveList(
-  args: SendInteractiveListArgs
+  args: SendInteractiveListArgs,
 ): Promise<MetaSendResult> {
   const {
-    phoneNumberId, accessToken, to,
-    bodyText, buttonLabel, headerText, footerText, sections, contextMessageId,
+    phoneNumberId,
+    accessToken,
+    to,
+    bodyText,
+    buttonLabel,
+    headerText,
+    footerText,
+    sections,
+    contextMessageId,
   } = args
   validateInteractiveBody(bodyText)
   validateInteractiveHeaderFooter(headerText, footerText)
   if (!buttonLabel) throw new Error('Interactive list requires a buttonLabel.')
   if (buttonLabel.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
     throw new Error(
-      `Interactive list buttonLabel "${buttonLabel}" exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`
+      `Interactive list buttonLabel "${buttonLabel}" exceeds ${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars.`,
     )
   }
-  if (sections.length < 1 || sections.length > INTERACTIVE_LIMITS.maxListSections) {
+  if (
+    sections.length < 1 ||
+    sections.length > INTERACTIVE_LIMITS.maxListSections
+  ) {
     throw new Error(
-      `Interactive list requires 1-${INTERACTIVE_LIMITS.maxListSections} sections (got ${sections.length}).`
+      `Interactive list requires 1-${INTERACTIVE_LIMITS.maxListSections} sections (got ${sections.length}).`,
     )
   }
   const totalRows = sections.reduce((sum, s) => sum + s.rows.length, 0)
   if (totalRows < 1 || totalRows > INTERACTIVE_LIMITS.maxListRowsTotal) {
     throw new Error(
-      `Interactive list requires 1-${INTERACTIVE_LIMITS.maxListRowsTotal} rows total across all sections (got ${totalRows}).`
+      `Interactive list requires 1-${INTERACTIVE_LIMITS.maxListRowsTotal} rows total across all sections (got ${totalRows}).`,
     )
   }
   const seenIds = new Set<string>()
@@ -1074,10 +1169,11 @@ export async function sendInteractiveList(
         throw new Error(`Interactive list has duplicate row id "${row.id}".`)
       }
       seenIds.add(row.id)
-      if (!row.title) throw new Error(`Interactive list row "${row.id}" missing title.`)
+      if (!row.title)
+        throw new Error(`Interactive list row "${row.id}" missing title.`)
       if (row.title.length > INTERACTIVE_LIMITS.listRowTitleMaxLength) {
         throw new Error(
-          `Interactive list row title "${row.title}" exceeds ${INTERACTIVE_LIMITS.listRowTitleMaxLength} chars.`
+          `Interactive list row title "${row.title}" exceeds ${INTERACTIVE_LIMITS.listRowTitleMaxLength} chars.`,
         )
       }
       if (
@@ -1085,7 +1181,7 @@ export async function sendInteractiveList(
         row.description.length > INTERACTIVE_LIMITS.listRowDescriptionMaxLength
       ) {
         throw new Error(
-          `Interactive list row description for "${row.id}" exceeds ${INTERACTIVE_LIMITS.listRowDescriptionMaxLength} chars.`
+          `Interactive list row description for "${row.id}" exceeds ${INTERACTIVE_LIMITS.listRowDescriptionMaxLength} chars.`,
         )
       }
     }
@@ -1137,7 +1233,7 @@ function validateInteractiveBody(bodyText: string): void {
   if (!bodyText) throw new Error('Interactive message requires bodyText.')
   if (bodyText.length > INTERACTIVE_LIMITS.bodyMaxLength) {
     throw new Error(
-      `Interactive bodyText exceeds ${INTERACTIVE_LIMITS.bodyMaxLength} chars.`
+      `Interactive bodyText exceeds ${INTERACTIVE_LIMITS.bodyMaxLength} chars.`,
     )
   }
 }
@@ -1146,14 +1242,17 @@ function validateInteractiveHeaderFooter(
   headerText: string | undefined,
   footerText: string | undefined,
 ): void {
-  if (headerText && headerText.length > INTERACTIVE_LIMITS.headerTextMaxLength) {
+  if (
+    headerText &&
+    headerText.length > INTERACTIVE_LIMITS.headerTextMaxLength
+  ) {
     throw new Error(
-      `Interactive headerText exceeds ${INTERACTIVE_LIMITS.headerTextMaxLength} chars.`
+      `Interactive headerText exceeds ${INTERACTIVE_LIMITS.headerTextMaxLength} chars.`,
     )
   }
   if (footerText && footerText.length > INTERACTIVE_LIMITS.footerMaxLength) {
     throw new Error(
-      `Interactive footerText exceeds ${INTERACTIVE_LIMITS.footerMaxLength} chars.`
+      `Interactive footerText exceeds ${INTERACTIVE_LIMITS.footerMaxLength} chars.`,
     )
   }
 }
@@ -1178,7 +1277,7 @@ export interface GetMediaUrlArgs {
  * Null when Meta omits the field or sends something non-numeric.
  */
 export async function getMediaUrl(
-  args: GetMediaUrlArgs
+  args: GetMediaUrlArgs,
 ): Promise<{ url: string; mimeType: string; fileSize: number | null }> {
   const { mediaId, accessToken } = args
   const response = await fetch(`${META_API_BASE}/${mediaId}`, {
@@ -1209,7 +1308,7 @@ export interface DownloadMediaArgs {
  * Step two of the media-proxy flow.
  */
 export async function downloadMedia(
-  args: DownloadMediaArgs
+  args: DownloadMediaArgs,
 ): Promise<{ buffer: Buffer; contentType: string }> {
   const { downloadUrl, accessToken } = args
   const response = await fetch(downloadUrl, {
